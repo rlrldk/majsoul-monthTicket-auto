@@ -3,8 +3,8 @@ name: Keep Repo Active
 on:
   workflow_dispatch:
   schedule:
-    # 30일에 한 번, 자정에 실행 (60일이 되기 전에 갱신)
-    - cron: '0 0 1/30 * *'
+    # 매일 자정에 실행 (한국 시간 기준)
+    - cron: '15 15 * * *'
 
 jobs:
   update-readme:
@@ -13,8 +13,13 @@ jobs:
       - uses: actions/checkout@v3
       - name: Update README
         run: |
-          # README.md 파일 맨 아래에 마지막 업데이트 시간을 'YYYY-MM-DD HH:MM:SS KST' 형식으로 기록
-          echo "Last updated on $(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M:%S %Z')" >> README.md
+          # 새로운 업데이트 라인을 임시 파일에 먼저 작성
+          echo "Last updated on $(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M:%S %Z')" > temp_readme.md
+          # 기존 README.md 내용을 임시 파일 아래에 추가
+          cat README.md >> temp_readme.md
+          # 임시 파일을 원래 README.md 파일로 덮어쓰기
+          mv temp_readme.md README.md
+          
           git config --global user.name 'github-actions'
           git config --global user.email 'github-actions@github.com'
           git add README.md
