@@ -1,5 +1,4 @@
-Last updated on 2025-08-27 00:39:27 KST
-Last updated on 2025-08-26 08:48:34 KST
+Last updated on 2025-08-27 15:16:52 KST
 # majsoul-monthTicket-auto
 ![image](https://github.com/4n3u/majsoul-monthTicket-auto/assets/167657823/89844790-9a47-40b7-8e65-ed07430f3917)
 ![image](https://github.com/4n3u/majsoul-monthTicket-auto/assets/167657823/720689fa-7237-4d85-8979-c3e768c7f1d9)
@@ -44,4 +43,3 @@ This project is based on the [mahjong_soul_api](https://github.com/MahjongReposi
   
   ![image](https://github.com/4n3u/majsoul-monthTicket-auto/assets/167657823/fa01c1d0-ae9c-4d97-8430-808a2b06c329)
 
-Last updated on 2025-08-26 08:44:47 KST
