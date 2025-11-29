@@ -1,4 +1,4 @@
-Last updated on 2025-11-29 00:31:04 KST
+Last updated on 2025-11-30 00:28:48 KST
 # majsoul-monthTicket-auto
 ![image](https://github.com/4n3u/majsoul-monthTicket-auto/assets/167657823/89844790-9a47-40b7-8e65-ed07430f3917)
 ![image](https://github.com/4n3u/majsoul-monthTicket-auto/assets/167657823/720689fa-7237-4d85-8979-c3e768c7f1d9)
