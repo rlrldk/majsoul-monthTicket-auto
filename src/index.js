@@ -1,5 +1,7 @@
 require('dotenv').config();
 
+const fs = require('node:fs');
+const path = require('node:path');
 const { createHmac, randomUUID } = require('node:crypto');
 const protobuf = require('protobufjs/light');
 const WebSocket = require('ws');
@@ -17,6 +19,7 @@ const GREEN_GIFT_PRICE_GOLD = 15000;
 const GREEN_GIFT_MAX_COUNT_PER_GOODS = 4;
 const REVIVE_COIN_GOLD_BONUS = 18000;
 const BUY_FROM_ZHP_LIMIT_REACHED_CODE = 2402;
+const RESOURCE_VERSION_CACHE_PATH = path.join(process.cwd(), 'resource-version.json');
 
 const DEFAULT_DEVICE = {
   platform: 'pc',
@@ -117,9 +120,11 @@ const must = (value, message) => value || fail(message);
 
 const normalizeBase = raw => {
   const base = must((raw || '').trim(), 'Server base URL must not be empty');
+
   if (!/^https?:\/\//i.test(base)) {
     fail('Server base URL must start with http:// or https://');
   }
+
   return base.replace(/\/+$/, '');
 };
 
@@ -149,6 +154,7 @@ function getServerConfig(serverKey) {
   }
 
   let base = normalizeBase(server.base);
+
   if (server.key === 'cn' && new URL(base).pathname === '/') {
     base = `${base}/1`;
   }
@@ -175,6 +181,7 @@ async function requestJson(url, { body, headers, ...options } = {}) {
   }
 
   const response = await fetch(url, init);
+
   if (!response.ok) {
     fail(`Request failed ${response.status} ${response.statusText} for ${url}`);
   }
@@ -219,70 +226,73 @@ function extractResourceVersion(text) {
   return [...new Set(versions)].sort(compareDottedVersions).at(-1);
 }
 
-async function resolveResourceVersion(server, { gatewayUrl, productVersion, routeLang } = {}) {
-  const override = process.env.MS_RESOURCE_VERSION || process.env.RESOURCE_VERSION;
+function getOverrideResourceVersion() {
+  return process.env.MS_RESOURCE_VERSION || process.env.RESOURCE_VERSION || null;
+}
 
-  if (override) {
-    console.log(`resource version override -> ${override}`);
-    return override;
-  }
-
-  const sources = [];
-
-  if (gatewayUrl && productVersion) {
-    sources.push({
-      name: 'clientgate upgrade_info',
-      url: buildUpgradeInfoUrl(gatewayUrl, productVersion, routeLang)
-    });
-  }
-
-  const releaseUrl = RESOURCE_RELEASE_URLS[server.key];
-  if (releaseUrl) {
-    const url = new URL(releaseUrl);
-    url.searchParams.set('randv', buildRandv());
-
-    sources.push({
-      name: 'warehouse release',
-      url
-    });
-  }
-
-  for (const source of sources) {
-    try {
-      const text = await requestText(source.url);
-      const resourceVersion = extractResourceVersion(text);
-
-      if (resourceVersion) {
-        console.log(`resource version auto-detected from ${source.name} -> ${resourceVersion}`);
-        return resourceVersion;
-      }
-
-      console.warn(`resource version source has no 0.x.x value: ${source.name}`);
-    } catch (error) {
-      console.warn(`resource version source failed: ${source.name}: ${error?.message || error}`);
+function readResourceVersionCache() {
+  try {
+    if (!fs.existsSync(RESOURCE_VERSION_CACHE_PATH)) {
+      return {};
     }
-  }
 
-  console.warn('resource version auto-detect failed; falling back to default resource version');
-  return undefined;
+    return JSON.parse(fs.readFileSync(RESOURCE_VERSION_CACHE_PATH, 'utf8'));
+  } catch (error) {
+    console.warn(`resource version cache read failed: ${error?.message || error}`);
+    return {};
+  }
 }
 
-function loadProtoTypes(liqiJson) {
-  const root = protobuf.Root.fromJSON(liqiJson);
-
-  return Object.fromEntries(
-    Object.entries(PROTO_TYPES).map(([key, typeName]) => [key, root.lookupType(typeName)])
-  );
-}
-
-function encode(type, payload) {
-  const error = type.verify(payload);
-
-  if (error) {
-    fail(error);
+function saveSuccessfulResourceVersion(serverKey, resourceVersion) {
+  if (!serverKey || !resourceVersion) {
+    return;
   }
 
-  return type.encode(payload).finish();
+  const cache = readResourceVersionCache();
+
+  if (cache[serverKey] === resourceVersion) {
+    return;
+  }
+
+  cache[serverKey] = resourceVersion;
+  cache.updatedAt = new Date().toISOString();
+
+  fs.writeFileSync(RESOURCE_VERSION_CACHE_PATH, `${JSON.stringify(cache, null, 2)}\n`, 'utf8');
+
+  console.log(`resource version cache saved -> ${serverKey}: ${resourceVersion}`);
+}
+
+function buildResourceVersionCandidates({ serverKey, detectedResourceVersion }) {
+  const cache = readResourceVersionCache();
+  const cachedResourceVersion = cache[serverKey];
+  const overrideResourceVersion = getOverrideResourceVersion();
+
+  const candidates = [];
+
+  if (cachedResourceVersion) {
+    candidates.push(cachedResourceVersion);
+  }
+
+  if (overrideResourceVersion) {
+    candidates.push(overrideResourceVersion);
+  }
+
+  if (detectedResourceVersion) {
+    candidates.push(detectedResourceVersion);
+  }
+
+  for (let patch = 260; patch >= 180; patch -= 1) {
+    candidates.push(`0.16.${patch}`);
+  }
+
+  candidates.push('0.16.193');
+
+  return [...new Set(candidates.filter(Boolean))];
+}
+
+function isVersionStringError(error) {
+  const message = error?.message || String(error);
+  return message.includes('version_str') || message.includes('client_version_string');
 }
 
 function buildRoutesUrl(gatewayUrl, version, lang) {
@@ -310,6 +320,66 @@ function buildUpgradeInfoUrl(gatewayUrl, version, lang) {
   url.searchParams.set('randv', buildRandv());
 
   return url;
+}
+
+async function resolveResourceVersion(server, { gatewayUrl, productVersion, routeLang } = {}) {
+  const sources = [];
+
+  if (gatewayUrl && productVersion) {
+    sources.push({
+      name: 'clientgate upgrade_info',
+      url: buildUpgradeInfoUrl(gatewayUrl, productVersion, routeLang)
+    });
+  }
+
+  const releaseUrl = RESOURCE_RELEASE_URLS[server.key];
+
+  if (releaseUrl) {
+    const url = new URL(releaseUrl);
+    url.searchParams.set('randv', buildRandv());
+
+    sources.push({
+      name: 'warehouse release',
+      url
+    });
+  }
+
+  for (const source of sources) {
+    try {
+      const text = await requestText(source.url);
+      const resourceVersion = extractResourceVersion(text);
+
+      if (resourceVersion) {
+        console.log(`resource version auto-detected from ${source.name} -> ${resourceVersion}`);
+        return resourceVersion;
+      }
+
+      console.warn(`resource version source has no 0.x.x value: ${source.name}`);
+    } catch (error) {
+      console.warn(`resource version source failed: ${source.name}: ${error?.message || error}`);
+    }
+  }
+
+  console.warn('resource version auto-detect failed; using cached/scan candidates');
+  return null;
+}
+
+function loadProtoTypes(liqiJson) {
+  const root = protobuf.Root.fromJSON(liqiJson);
+
+  return Object.fromEntries(
+    Object.entries(PROTO_TYPES).map(([key, typeName]) => [key, root.lookupType(typeName)])
+  );
+}
+
+function encode(type, payload) {
+  const error = type.verify(payload);
+
+  if (error) {
+    fail(error);
+  }
+
+  return type.encode(payload).finish();
 }
 
 function shuffle(items) {
@@ -355,24 +425,26 @@ async function loadServerContext(server) {
     'Gateway URL missing from config'
   ).replace(/\/+$/, '');
 
-  const resourceVersion = await resolveResourceVersion(server, {
+  const detectedResourceVersion = await resolveResourceVersion(server, {
     gatewayUrl,
     productVersion,
     routeLang
   });
 
-  const clientMetadata = buildClientMetadata({
-    productVersion,
-    resourceVersion
+  const resourceVersionCandidates = buildResourceVersionCandidates({
+    serverKey: server.key,
+    detectedResourceVersion
   });
 
   console.log(`version.json -> version=${version} force_version=${versionInfo.force_version} code=${versionInfo.code}`);
   console.log(
-    `web client -> productVersion=${productVersion} resource=${clientMetadata.clientVersion.resource} client_version_string=${clientMetadata.clientVersionString}`
+    `resource version candidates -> ${resourceVersionCandidates.slice(0, 8).join(', ')}${
+      resourceVersionCandidates.length > 8 ? ` ... total=${resourceVersionCandidates.length}` : ''
+    }`
   );
 
   const [routes, liqiJson] = await Promise.all([
-    requestJson(buildRoutesUrl(gatewayUrl, clientMetadata.routeVersion, routeLang)),
+    requestJson(buildRoutesUrl(gatewayUrl, productVersion, routeLang)),
     requestJson(buildUrl(base, `${liqiPrefix.replace(/^\/+/, '')}/res/proto/liqi.json`))
   ]);
 
@@ -394,7 +466,8 @@ async function loadServerContext(server) {
     base,
     routes: routesToTry,
     version,
-    clientMetadata,
+    productVersion,
+    resourceVersionCandidates,
     proto: loadProtoTypes(liqiJson)
   };
 }
@@ -640,7 +713,7 @@ async function createSessionForRoute(context, route, credentials) {
   };
 }
 
-async function createSession(context, credentials) {
+async function createSessionWithRoutes(context, credentials) {
   const errors = [];
 
   for (const route of context.routes) {
@@ -653,6 +726,47 @@ async function createSession(context, credentials) {
   }
 
   fail(`All gateway routes failed: ${JSON.stringify(errors)}`);
+}
+
+async function createSession(context, credentials) {
+  const errors = [];
+
+  for (const resourceVersion of context.resourceVersionCandidates) {
+    const clientMetadata = buildClientMetadata({
+      productVersion: context.productVersion,
+      resourceVersion
+    });
+
+    const candidateContext = {
+      ...context,
+      clientMetadata
+    };
+
+    console.log(
+      `trying resource version: ${clientMetadata.clientVersion.resource} -> ${clientMetadata.clientVersionString}`
+    );
+
+    try {
+      const session = await createSessionWithRoutes(candidateContext, credentials);
+      saveSuccessfulResourceVersion(context.server.key, clientMetadata.clientVersion.resource);
+      return session;
+    } catch (error) {
+      const message = error?.message || String(error);
+
+      if (!isVersionStringError(error)) {
+        throw error;
+      }
+
+      errors.push({
+        resourceVersion: clientMetadata.clientVersion.resource,
+        message
+      });
+
+      console.warn(`resource version failed: ${clientMetadata.clientVersion.resource}`);
+    }
+  }
+
+  fail(`All resource version candidates failed: ${JSON.stringify(errors)}`);
 }
 
 async function runActions(session) {
