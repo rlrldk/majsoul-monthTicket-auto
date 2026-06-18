@@ -41,7 +41,7 @@ const SERVER_CONFIGS = {
     routeLang: 'jp',
     tag: 'jp',
     loginMode: 'oauth_code',
-    oauthType: 7,
+    oauthType: 21,
     currencyPlatforms: [1, 3, 5, 9, 12]
   },
   en: {
