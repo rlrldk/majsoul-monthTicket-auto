@@ -337,51 +337,39 @@ async function loadServerContext(server) {
 
   const version = versionInfo.version;
   const codeDir = must(String(versionInfo.code || '').split('/')[0], 'Missing code directory for config fetch');
-  const version = versionInfo.version;
-  const codeDir = must(String(versionInfo.code || '').split('/')[0], 'Missing code directory for config fetch');
   const productVersion = parseProductVersion(indexHtml);
-  
+
   const [config, resManifest] = await Promise.all([
     requestJson(buildUrl(base, `${codeDir}/config.json`)),
     requestJson(buildUrl(base, `resversion${version}.json`))
   ]);
-  
-  const liqiPrefix = must(resManifest?.res?.['res/proto/liqi.json']?.prefix, 'liqi prefix missing from resversion manifest');
+
+  const liqiPrefix = must(
+    resManifest?.res?.['res/proto/liqi.json']?.prefix,
+    'liqi prefix missing from resversion manifest'
+  );
   console.log(`liqi prefix: ${liqiPrefix}`);
-  
+
   const gatewayUrl = must(
     config?.ip?.find(entry => Array.isArray(entry?.gateways) && entry.gateways.length)?.gateways?.[0]?.url,
     'Gateway URL missing from config'
   ).replace(/\/+$/, '');
-  
+
   const resourceVersion = await resolveResourceVersion(server, {
     gatewayUrl,
     productVersion,
     routeLang
   });
-  
+
   const clientMetadata = buildClientMetadata({
     productVersion,
     resourceVersion
   });
-  
+
   console.log(`version.json -> version=${version} force_version=${versionInfo.force_version} code=${versionInfo.code}`);
   console.log(
     `web client -> productVersion=${productVersion} resource=${clientMetadata.clientVersion.resource} client_version_string=${clientMetadata.clientVersionString}`
   );
-  
-  const [routes, liqiJson] = await Promise.all([
-    requestJson(buildRoutesUrl(gatewayUrl, clientMetadata.routeVersion, routeLang)),
-    requestJson(buildUrl(base, `${liqiPrefix.replace(/^\/+/, '')}/res/proto/liqi.json`))
-  ]);
-
-  const liqiPrefix = must(resManifest?.res?.['res/proto/liqi.json']?.prefix, 'liqi prefix missing from resversion manifest');
-  console.log(`liqi prefix: ${liqiPrefix}`);
-
-  const gatewayUrl = must(
-    config?.ip?.find(entry => Array.isArray(entry?.gateways) && entry.gateways.length)?.gateways?.[0]?.url,
-    'Gateway URL missing from config'
-  ).replace(/\/+$/, '');
 
   const [routes, liqiJson] = await Promise.all([
     requestJson(buildRoutesUrl(gatewayUrl, clientMetadata.routeVersion, routeLang)),
