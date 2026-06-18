@@ -8,16 +8,21 @@ function parseProductVersion(html) {
   return match[1];
 }
 
-function normalizeWebVersion(value) {
-  return String(value || '').replace(/^v/, '').replace(/\.w$/, '');
+function normalizeResourceVersion(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^WebGL_2022-/, '')
+    .replace(/^web-/, '')
+    .replace(/^v/, '')
+    .replace(/\.w$/, '');
 }
 
-function buildClientMetadata({ productVersion, resourceVersion = DEFAULT_RESOURCE_VERSION, webVersion }) {
+function buildClientMetadata({ productVersion, resourceVersion = DEFAULT_RESOURCE_VERSION }) {
   if (!productVersion) {
     throw new Error('productVersion is required');
   }
 
-  const resolvedResourceVersion = normalizeWebVersion(webVersion || resourceVersion);
+  const resolvedResourceVersion = normalizeResourceVersion(resourceVersion);
   if (!resolvedResourceVersion) {
     throw new Error('resourceVersion is required');
   }
@@ -28,7 +33,7 @@ function buildClientMetadata({ productVersion, resourceVersion = DEFAULT_RESOURC
       resource: resolvedResourceVersion,
       package: productVersion
     },
-    clientVersionString: `web-${resolvedResourceVersion}`
+    clientVersionString: `WebGL_2022-${resolvedResourceVersion}`
   };
 }
 
