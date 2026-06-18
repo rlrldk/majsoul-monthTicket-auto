@@ -223,6 +223,7 @@ async function loadServerContext(server) {
   const productVersion = parseProductVersion(indexHtml);
   const clientMetadata = buildClientMetadata({
     productVersion,
+    webVersion: version,
     resourceVersion: process.env.MS_RESOURCE_VERSION || process.env.RESOURCE_VERSION
   });
 
