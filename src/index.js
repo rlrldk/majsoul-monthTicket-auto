@@ -17,6 +17,7 @@ const GREEN_GIFT_PRICE_GOLD = 15000;
 const GREEN_GIFT_MAX_COUNT_PER_GOODS = 4;
 const REVIVE_COIN_GOLD_BONUS = 18000;
 const BUY_FROM_ZHP_LIMIT_REACHED_CODE = 2402;
+
 const DEFAULT_DEVICE = {
   platform: 'pc',
   hardware: 'pc',
@@ -29,7 +30,8 @@ const DEFAULT_DEVICE = {
   model_number: 'Chrome',
   screen_width: 1920,
   screen_height: 1080,
-  user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36',
+  user_agent:
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36',
   screen_type: 2
 };
 
@@ -79,6 +81,12 @@ const SERVER_CONFIGS = {
   }
 };
 
+const RESOURCE_RELEASE_URLS = {
+  jp: 'https://appstatic.mahjongsoul.com/v4/jp/resources/warehouseSettings/jp-release.json',
+  en: 'https://appstatic.mahjongsoul.com/v4/en/resources/warehouseSettings/en-release.json',
+  kr: 'https://appstatic.mahjongsoul.com/v4/kr/resources/warehouseSettings/kr-release.json'
+};
+
 const PROTO_TYPES = {
   Wrapper: 'Wrapper',
   ReqRequestConnection: 'lq.ReqRequestConnection',
@@ -106,6 +114,7 @@ const fail = message => {
 };
 
 const must = (value, message) => value || fail(message);
+
 const normalizeBase = raw => {
   const base = must((raw || '').trim(), 'Server base URL must not be empty');
   if (!/^https?:\/\//i.test(base)) {
@@ -113,8 +122,11 @@ const normalizeBase = raw => {
   }
   return base.replace(/\/+$/, '');
 };
+
 const buildUrl = (base, path) => `${base}/${path.replace(/^\/+/, '')}`;
+
 const normalizeServerKey = raw => (raw || '').trim().toLowerCase();
+
 const buildRandv = () => {
   const now = Date.now();
   return String(now + Math.floor(Math.random() * now));
@@ -122,6 +134,7 @@ const buildRandv = () => {
 
 const hashCnPassword = password =>
   createHmac('sha256', 'lailai').update(password).digest('hex');
+
 const buildDevice = server => ({
   ...DEFAULT_DEVICE,
   ...server.device
@@ -130,6 +143,7 @@ const buildDevice = server => ({
 function getServerConfig(serverKey) {
   const key = normalizeServerKey(serverKey || DEFAULT_SERVER);
   const server = SERVER_CONFIGS[key];
+
   if (!server) {
     fail(`Unsupported MS_SERVER "${serverKey}". Use one of: ${Object.keys(SERVER_CONFIGS).join(', ')}`);
   }
@@ -138,6 +152,7 @@ function getServerConfig(serverKey) {
   if (server.key === 'cn' && new URL(base).pathname === '/') {
     base = `${base}/1`;
   }
+
   return {
     ...server,
     base
@@ -146,8 +161,10 @@ function getServerConfig(serverKey) {
 
 async function requestJson(url, { body, headers, ...options } = {}) {
   const init = { ...options, headers };
+
   if (body !== undefined) {
     init.body = typeof body === 'string' ? body : JSON.stringify(body);
+
     if (typeof body !== 'string') {
       init.headers = {
         Accept: 'application/json',
@@ -161,47 +178,84 @@ async function requestJson(url, { body, headers, ...options } = {}) {
   if (!response.ok) {
     fail(`Request failed ${response.status} ${response.statusText} for ${url}`);
   }
-  return response.json();
-}
-
-async function requestFormJson(url, data, headers = {}) {
-  const body = new URLSearchParams();
-  for (const [key, value] of Object.entries(data)) {
-    body.set(key, String(value));
-  }
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/x-www-form-urlencoded',
-      ...headers
-    },
-    body
-  });
-
-  if (!response.ok) {
-    fail(`Request failed ${response.status} ${response.statusText} for ${url}`);
-  }
 
   return response.json();
-}
-
-function resolvePassportBase(config) {
-  const fromConfig = Array.isArray(config?.yo_service_url) ? config.yo_service_url[0] : '';
-  return normalizeBase(fromConfig || 'https://passport.mahjongsoul.com');
 }
 
 async function requestText(url, options = {}) {
   const response = await fetch(url, options);
+
   if (!response.ok) {
     fail(`Request failed ${response.status} ${response.statusText} for ${url}`);
   }
+
   return response.text();
+}
+
+function compareDottedVersions(a, b) {
+  const pa = String(a).split('.').map(Number);
+  const pb = String(b).split('.').map(Number);
+  const length = Math.max(pa.length, pb.length);
+
+  for (let i = 0; i < length; i += 1) {
+    const da = pa[i] || 0;
+    const db = pb[i] || 0;
+
+    if (da !== db) {
+      return da - db;
+    }
+  }
+
+  return 0;
+}
+
+function extractResourceVersion(text) {
+  const versions = [...String(text || '').matchAll(/\b0\.\d+\.\d+\b/g)].map(match => match[0]);
+
+  if (!versions.length) {
+    return null;
+  }
+
+  return [...new Set(versions)].sort(compareDottedVersions).at(-1);
+}
+
+async function resolveResourceVersion(server) {
+  const override = process.env.MS_RESOURCE_VERSION || process.env.RESOURCE_VERSION;
+
+  if (override) {
+    console.log(`resource version override -> ${override}`);
+    return override;
+  }
+
+  const releaseUrl = RESOURCE_RELEASE_URLS[server.key];
+
+  if (!releaseUrl) {
+    return undefined;
+  }
+
+  const url = new URL(releaseUrl);
+  url.searchParams.set('randv', buildRandv());
+
+  try {
+    const text = await requestText(url);
+    const resourceVersion = extractResourceVersion(text);
+
+    if (resourceVersion) {
+      console.log(`resource version auto-detected -> ${resourceVersion}`);
+      return resourceVersion;
+    }
+
+    console.warn(`resource version auto-detect failed: no 0.x.x version found in ${releaseUrl}`);
+  } catch (error) {
+    console.warn(`resource version auto-detect failed: ${error?.message || error}`);
+  }
+
+  return undefined;
 }
 
 function loadProtoTypes(liqiJson) {
   const root = protobuf.Root.fromJSON(liqiJson);
+
   return Object.fromEntries(
     Object.entries(PROTO_TYPES).map(([key, typeName]) => [key, root.lookupType(typeName)])
   );
@@ -209,9 +263,11 @@ function loadProtoTypes(liqiJson) {
 
 function encode(type, payload) {
   const error = type.verify(payload);
+
   if (error) {
     fail(error);
   }
+
   return type.encode(payload).finish();
 }
 
@@ -219,19 +275,23 @@ function buildRoutesUrl(gatewayUrl, version, lang) {
   const url = new URL(`${gatewayUrl.replace(/\/+$/, '')}/api/clientgate/routes`);
   url.searchParams.set('platform', 'Web');
   url.searchParams.set('version', version);
+
   if (lang) {
     url.searchParams.set('lang', lang);
   }
+
   url.searchParams.set('randv', buildRandv());
   return url;
 }
 
 function shuffle(items) {
   const values = [...items];
+
   for (let i = values.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
     [values[i], values[j]] = [values[j], values[i]];
   }
+
   return values;
 }
 
@@ -244,16 +304,19 @@ async function loadServerContext(server) {
     requestJson(versionUrl),
     requestText(buildUrl(base, 'index.html'))
   ]);
+
   must(versionInfo?.version, `Unexpected version payload: ${JSON.stringify(versionInfo)}`);
 
   const version = versionInfo.version;
   const codeDir = must(String(versionInfo.code || '').split('/')[0], 'Missing code directory for config fetch');
   const productVersion = parseProductVersion(indexHtml);
+  const resourceVersion = await resolveResourceVersion(server);
+
   const clientMetadata = buildClientMetadata({
     productVersion,
-    resourceVersion: process.env.MS_RESOURCE_VERSION || process.env.RESOURCE_VERSION
+    resourceVersion
   });
-  
+
   console.log(`version.json -> version=${version} force_version=${versionInfo.force_version} code=${versionInfo.code}`);
   console.log(
     `web client -> productVersion=${productVersion} resource=${clientMetadata.clientVersion.resource} client_version_string=${clientMetadata.clientVersionString}`
@@ -263,8 +326,6 @@ async function loadServerContext(server) {
     requestJson(buildUrl(base, `${codeDir}/config.json`)),
     requestJson(buildUrl(base, `resversion${version}.json`))
   ]);
-
-  const passportBase = server.loginMode === 'oauth_code' ? resolvePassportBase(config) : null;
 
   const liqiPrefix = must(resManifest?.res?.['res/proto/liqi.json']?.prefix, 'liqi prefix missing from resversion manifest');
   console.log(`liqi prefix: ${liqiPrefix}`);
@@ -280,6 +341,7 @@ async function loadServerContext(server) {
   ]);
 
   const routeList = routes?.data?.routes?.filter(route => route?.id && route?.domain) ?? [];
+
   if (!routeList.length) {
     fail('No available gateway servers found.');
   }
@@ -288,12 +350,12 @@ async function loadServerContext(server) {
     id: route.id,
     endpoint: `wss://${route.domain}/gateway`
   }));
+
   console.log(`available gateway routes: ${routesToTry.map(route => route.id).join(', ')}`);
 
   return {
     server,
     base,
-    passportBase,
     routes: routesToTry,
     version,
     clientMetadata,
@@ -311,6 +373,7 @@ async function openChannel(endpoint, origin, Wrapper) {
       clearTimeout(request.timeout);
       request.reject(error);
     }
+
     pending.clear();
   };
 
@@ -319,10 +382,12 @@ async function openChannel(endpoint, origin, Wrapper) {
       ws.removeListener('open', onOpen);
       ws.removeListener('error', onError);
     };
+
     const onOpen = () => {
       cleanup();
       resolve();
     };
+
     const onError = error => {
       cleanup();
       reject(error);
@@ -334,12 +399,14 @@ async function openChannel(endpoint, origin, Wrapper) {
 
   ws.on('message', data => {
     const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+
     if (buffer[0] !== 3) {
       return;
     }
 
     const requestId = buffer.readUInt16LE(1);
     const request = pending.get(requestId);
+
     if (!request) {
       return;
     }
@@ -385,16 +452,19 @@ async function openChannel(endpoint, origin, Wrapper) {
           if (!error) {
             return;
           }
+
           clearTimeout(timeout);
           pending.delete(requestId);
           reject(error);
         });
       });
     },
+
     async close() {
       if (ws.readyState === WebSocket.CLOSED) {
         return;
       }
+
       await new Promise(resolve => {
         ws.once('close', resolve);
         ws.close();
@@ -407,12 +477,16 @@ async function createSessionForRoute(context, route, credentials) {
   const { server, proto, clientMetadata } = context;
   const { uid, token, email, password } = credentials;
   const device = buildDevice(server);
+
   console.log(`trying gateway route ${route.id}: ${route.endpoint}`);
+
   const channel = await openChannel(route.endpoint, server.origin, proto.Wrapper);
+
   const call = async (name, requestType, payload, responseType) => {
     const wrapper = await channel.send(name, encode(requestType, payload));
     return responseType ? responseType.decode(wrapper.data) : wrapper;
   };
+
   const common = (name, responseType) => call(name, proto.ReqCommon, {}, responseType);
 
   await call(
@@ -425,6 +499,7 @@ async function createSessionForRoute(context, route, credentials) {
     },
     proto.ResRequestConnection
   );
+
   await call(
     '.lq.Route.heartbeat',
     proto.ReqHeartbeat,
@@ -454,6 +529,7 @@ async function createSessionForRoute(context, route, credentials) {
       }),
       proto.ResOauth2Login
     );
+
     if (!loginResponse.account) {
       fail('login failed: account not found.');
     }
@@ -468,47 +544,20 @@ async function createSessionForRoute(context, route, credentials) {
   }
 
   let accessToken = token;
-  let oauthType = server.oauthType;
-  
+
   if (server.loginMode === 'oauth_code') {
-    let authCode = token;
-  
-    // JP는 브라우저에서 뽑은 TOKEN을 oauth2Auth code로 직접 사용
-    // EN/KR 쪽에서 passport 교환이 필요할 때만 이 분기 사용
-    if (server.key !== 'jp') {
-      const passportResponse = await requestFormJson(
-        buildUrl(context.passportBase, 'user/login/'),
-        {
-          uid,
-          token,
-          deviceId: `web|${uid}`
-        },
-        {
-          Referer: `${context.base}/`,
-          'User-Agent': device.user_agent
-        }
-      );
-  
-      authCode = must(
-        passportResponse?.accessToken,
-        `passport login failed: ${JSON.stringify(passportResponse)}`
-      );
-  
-      oauthType = 21;
-    }
-  
     const authResponse = await call(
       '.lq.Lobby.oauth2Auth',
       proto.ReqOauth2Auth,
       buildOauth2AuthPayload({
-        oauthType,
-        token: authCode,
+        oauthType: server.oauthType,
+        token,
         uid,
         clientVersionString: clientMetadata.clientVersionString
       }),
       proto.ResOauth2Auth
     );
-  
+
     accessToken = must(authResponse?.access_token, `oauth2Auth failed: ${JSON.stringify(authResponse)}`);
   }
 
@@ -516,11 +565,12 @@ async function createSessionForRoute(context, route, credentials) {
     '.lq.Lobby.oauth2Check',
     proto.ReqOauth2Check,
     {
-      type: oauthType,
+      type: server.oauthType,
       access_token: accessToken
     },
     proto.ResOauth2Check
   );
+
   if (!checkResponse?.has_account) {
     fail(`oauth2Check failed: ${JSON.stringify(checkResponse)}`);
   }
@@ -529,7 +579,7 @@ async function createSessionForRoute(context, route, credentials) {
     '.lq.Lobby.oauth2Login',
     proto.ReqOauth2Login,
     buildOauth2LoginPayload({
-      oauthType,
+      oauthType: server.oauthType,
       accessToken,
       device,
       randomKey: randomUUID(),
@@ -540,6 +590,7 @@ async function createSessionForRoute(context, route, credentials) {
     }),
     proto.ResOauth2Login
   );
+
   if (!loginResponse.account) {
     fail('oauth2Login failed: account not found.');
   }
@@ -570,6 +621,7 @@ async function createSession(context, credentials) {
 
 async function runActions(session) {
   const { proto, common, call, loginGold } = session;
+
   console.log('oauth2Login.account.gold:', loginGold);
 
   const payResponse = await common('.lq.Lobby.payMonthTicket', proto.ResPayMonthTicket);
@@ -584,6 +636,7 @@ async function runActions(session) {
 
   const gainReviveCoinResponse = await common('.lq.Lobby.gainReviveCoin', proto.ResCommon);
   const gainReviveCoinErrorCode = Number(gainReviveCoinResponse?.error?.code ?? 0);
+
   if (gainReviveCoinErrorCode === 0) {
     console.log('gainReviveCoin: success');
   } else {
@@ -595,9 +648,11 @@ async function runActions(session) {
 
   const shopInfoResponse = await common('.lq.Lobby.fetchShopInfo', proto.ResShopInfo);
   const zhpGoods = shopInfoResponse.shop_info?.zhp?.goods;
+
   if (!zhpGoods) {
     fail('fetchShopInfo failed: shop_info.zhp not found.');
   }
+
   console.log('fetchShopInfo.shop_info.zhp.goods:', JSON.stringify(zhpGoods));
 
   const greenGoodsIds = zhpGoods.slice(0, 4).map(Number).filter(id => Number.isInteger(id) && id > 0);
@@ -612,12 +667,14 @@ async function runActions(session) {
     }
 
     const count = Math.min(GREEN_GIFT_MAX_COUNT_PER_GOODS, remainingPurchaseCount);
+
     const buyResponse = await call(
       '.lq.Lobby.buyFromZHP',
       proto.ReqBuyFromZHP,
       { goods_id: goodsId, count },
       proto.ResCommon
     );
+
     const errorCode = Number(buyResponse?.error?.code ?? 0);
 
     if (errorCode === BUY_FROM_ZHP_LIMIT_REACHED_CODE) {
@@ -627,6 +684,7 @@ async function runActions(session) {
       );
       break;
     }
+
     if (errorCode !== 0) {
       fail(`buyFromZHP failed for goods_id=${goodsId} count=${count}: ${JSON.stringify(buyResponse)}`);
     }
@@ -668,7 +726,9 @@ function loadRuntimeConfig() {
 async function run() {
   const credentials = loadRuntimeConfig();
   const { server } = credentials;
+
   console.log(`selected server: ${server.key}`);
+
   const context = await loadServerContext(server);
   const session = await createSession(context, credentials);
 
