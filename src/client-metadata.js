@@ -8,21 +8,27 @@ function parseProductVersion(html) {
   return match[1];
 }
 
-function buildClientMetadata({ productVersion, resourceVersion = DEFAULT_RESOURCE_VERSION }) {
+function normalizeWebVersion(value) {
+  return String(value || '').replace(/^v/, '').replace(/\.w$/, '');
+}
+
+function buildClientMetadata({ productVersion, resourceVersion = DEFAULT_RESOURCE_VERSION, webVersion }) {
   if (!productVersion) {
     throw new Error('productVersion is required');
   }
-  if (!resourceVersion) {
+
+  const resolvedResourceVersion = normalizeWebVersion(webVersion || resourceVersion);
+  if (!resolvedResourceVersion) {
     throw new Error('resourceVersion is required');
   }
 
   return {
     routeVersion: productVersion,
     clientVersion: {
-      resource: resourceVersion,
+      resource: resolvedResourceVersion,
       package: productVersion
     },
-    clientVersionString: `WebGL_2022-${resourceVersion}`
+    clientVersionString: `web-${resolvedResourceVersion}`
   };
 }
 
