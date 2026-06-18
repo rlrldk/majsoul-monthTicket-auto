@@ -164,6 +164,34 @@ async function requestJson(url, { body, headers, ...options } = {}) {
   return response.json();
 }
 
+async function requestFormJson(url, data, headers = {}) {
+  const body = new URLSearchParams();
+  for (const [key, value] of Object.entries(data)) {
+    body.set(key, String(value));
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      ...headers
+    },
+    body
+  });
+
+  if (!response.ok) {
+    fail(`Request failed ${response.status} ${response.statusText} for ${url}`);
+  }
+
+  return response.json();
+}
+
+function resolvePassportBase(config) {
+  const fromConfig = Array.isArray(config?.yo_service_url) ? config.yo_service_url[0] : '';
+  return normalizeBase(fromConfig || 'https://passport.mahjongsoul.com');
+}
+
 async function requestText(url, options = {}) {
   const response = await fetch(url, options);
   if (!response.ok) {
