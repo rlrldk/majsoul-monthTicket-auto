@@ -219,7 +219,7 @@ function extractResourceVersion(text) {
   return [...new Set(versions)].sort(compareDottedVersions).at(-1);
 }
 
-async function resolveResourceVersion(server) {
+async function resolveResourceVersion(server, { gatewayUrl, productVersion, routeLang } = {}) {
   const override = process.env.MS_RESOURCE_VERSION || process.env.RESOURCE_VERSION;
 
   if (override) {
@@ -227,29 +227,43 @@ async function resolveResourceVersion(server) {
     return override;
   }
 
+  const sources = [];
+
+  if (gatewayUrl && productVersion) {
+    sources.push({
+      name: 'clientgate upgrade_info',
+      url: buildUpgradeInfoUrl(gatewayUrl, productVersion, routeLang)
+    });
+  }
+
   const releaseUrl = RESOURCE_RELEASE_URLS[server.key];
+  if (releaseUrl) {
+    const url = new URL(releaseUrl);
+    url.searchParams.set('randv', buildRandv());
 
-  if (!releaseUrl) {
-    return undefined;
+    sources.push({
+      name: 'warehouse release',
+      url
+    });
   }
 
-  const url = new URL(releaseUrl);
-  url.searchParams.set('randv', buildRandv());
+  for (const source of sources) {
+    try {
+      const text = await requestText(source.url);
+      const resourceVersion = extractResourceVersion(text);
 
-  try {
-    const text = await requestText(url);
-    const resourceVersion = extractResourceVersion(text);
+      if (resourceVersion) {
+        console.log(`resource version auto-detected from ${source.name} -> ${resourceVersion}`);
+        return resourceVersion;
+      }
 
-    if (resourceVersion) {
-      console.log(`resource version auto-detected -> ${resourceVersion}`);
-      return resourceVersion;
+      console.warn(`resource version source has no 0.x.x value: ${source.name}`);
+    } catch (error) {
+      console.warn(`resource version source failed: ${source.name}: ${error?.message || error}`);
     }
-
-    console.warn(`resource version auto-detect failed: no 0.x.x version found in ${releaseUrl}`);
-  } catch (error) {
-    console.warn(`resource version auto-detect failed: ${error?.message || error}`);
   }
 
+  console.warn('resource version auto-detect failed; falling back to default resource version');
   return undefined;
 }
 
@@ -284,6 +298,20 @@ function buildRoutesUrl(gatewayUrl, version, lang) {
   return url;
 }
 
+function buildUpgradeInfoUrl(gatewayUrl, version, lang) {
+  const url = new URL(`${gatewayUrl.replace(/\/+$/, '')}/api/clientgate/upgrade_info`);
+  url.searchParams.set('platform', 'Web');
+
+  if (lang) {
+    url.searchParams.set('lang', lang);
+  }
+
+  url.searchParams.set('version', version);
+  url.searchParams.set('randv', buildRandv());
+
+  return url;
+}
+
 function shuffle(items) {
   const values = [...items];
 
@@ -309,22 +337,42 @@ async function loadServerContext(server) {
 
   const version = versionInfo.version;
   const codeDir = must(String(versionInfo.code || '').split('/')[0], 'Missing code directory for config fetch');
+  const version = versionInfo.version;
+  const codeDir = must(String(versionInfo.code || '').split('/')[0], 'Missing code directory for config fetch');
   const productVersion = parseProductVersion(indexHtml);
-  const resourceVersion = await resolveResourceVersion(server);
-
+  
+  const [config, resManifest] = await Promise.all([
+    requestJson(buildUrl(base, `${codeDir}/config.json`)),
+    requestJson(buildUrl(base, `resversion${version}.json`))
+  ]);
+  
+  const liqiPrefix = must(resManifest?.res?.['res/proto/liqi.json']?.prefix, 'liqi prefix missing from resversion manifest');
+  console.log(`liqi prefix: ${liqiPrefix}`);
+  
+  const gatewayUrl = must(
+    config?.ip?.find(entry => Array.isArray(entry?.gateways) && entry.gateways.length)?.gateways?.[0]?.url,
+    'Gateway URL missing from config'
+  ).replace(/\/+$/, '');
+  
+  const resourceVersion = await resolveResourceVersion(server, {
+    gatewayUrl,
+    productVersion,
+    routeLang
+  });
+  
   const clientMetadata = buildClientMetadata({
     productVersion,
     resourceVersion
   });
-
+  
   console.log(`version.json -> version=${version} force_version=${versionInfo.force_version} code=${versionInfo.code}`);
   console.log(
     `web client -> productVersion=${productVersion} resource=${clientMetadata.clientVersion.resource} client_version_string=${clientMetadata.clientVersionString}`
   );
-
-  const [config, resManifest] = await Promise.all([
-    requestJson(buildUrl(base, `${codeDir}/config.json`)),
-    requestJson(buildUrl(base, `resversion${version}.json`))
+  
+  const [routes, liqiJson] = await Promise.all([
+    requestJson(buildRoutesUrl(gatewayUrl, clientMetadata.routeVersion, routeLang)),
+    requestJson(buildUrl(base, `${liqiPrefix.replace(/^\/+/, '')}/res/proto/liqi.json`))
   ]);
 
   const liqiPrefix = must(resManifest?.res?.['res/proto/liqi.json']?.prefix, 'liqi prefix missing from resversion manifest');
