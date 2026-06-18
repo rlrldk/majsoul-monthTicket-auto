@@ -469,18 +469,41 @@ async function createSessionForRoute(context, route, credentials) {
   }
 
   let accessToken = token;
+  let oauthType = server.oauthType;
+  
   if (server.loginMode === 'oauth_code') {
+    const passportResponse = await requestFormJson(
+      buildUrl(context.passportBase, 'user/login/'),
+      {
+        uid,
+        token,
+        deviceId: `web|${uid}`
+      },
+      {
+        Referer: `${context.base}/`,
+        'User-Agent': device.user_agent
+      }
+    );
+  
+    const passportAccessToken = must(
+      passportResponse?.accessToken,
+      `passport login failed: ${JSON.stringify(passportResponse)}`
+    );
+  
+    oauthType = 7;
+  
     const authResponse = await call(
       '.lq.Lobby.oauth2Auth',
       proto.ReqOauth2Auth,
       buildOauth2AuthPayload({
-        oauthType: server.oauthType,
-        token,
+        oauthType,
+        token: passportAccessToken,
         uid,
         clientVersionString: clientMetadata.clientVersionString
       }),
       proto.ResOauth2Auth
     );
+  
     accessToken = must(authResponse?.access_token, `oauth2Auth failed: ${JSON.stringify(authResponse)}`);
   }
 
@@ -488,7 +511,7 @@ async function createSessionForRoute(context, route, credentials) {
     '.lq.Lobby.oauth2Check',
     proto.ReqOauth2Check,
     {
-      type: server.oauthType,
+      type: oauthType,
       access_token: accessToken
     },
     proto.ResOauth2Check
@@ -501,7 +524,7 @@ async function createSessionForRoute(context, route, credentials) {
     '.lq.Lobby.oauth2Login',
     proto.ReqOauth2Login,
     buildOauth2LoginPayload({
-      oauthType: server.oauthType,
+      oauthType,
       accessToken,
       device,
       randomKey: randomUUID(),
