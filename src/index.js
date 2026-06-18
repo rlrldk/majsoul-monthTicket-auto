@@ -265,6 +265,8 @@ async function loadServerContext(server) {
     requestJson(buildUrl(base, `resversion${version}.json`))
   ]);
 
+  const passportBase = server.loginMode === 'oauth_code' ? resolvePassportBase(config) : null;
+
   const liqiPrefix = must(resManifest?.res?.['res/proto/liqi.json']?.prefix, 'liqi prefix missing from resversion manifest');
   console.log(`liqi prefix: ${liqiPrefix}`);
 
@@ -292,6 +294,7 @@ async function loadServerContext(server) {
   return {
     server,
     base,
+    passportBase,
     routes: routesToTry,
     version,
     clientMetadata,
