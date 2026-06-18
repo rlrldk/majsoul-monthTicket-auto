@@ -41,7 +41,7 @@ const SERVER_CONFIGS = {
     routeLang: 'jp',
     tag: 'jp',
     loginMode: 'oauth_code',
-    oauthType: 21,
+    oauthType: 7,
     currencyPlatforms: [1, 3, 5, 9, 12]
   },
   en: {
@@ -472,32 +472,38 @@ async function createSessionForRoute(context, route, credentials) {
   let oauthType = server.oauthType;
   
   if (server.loginMode === 'oauth_code') {
-    const passportResponse = await requestFormJson(
-      buildUrl(context.passportBase, 'user/login/'),
-      {
-        uid,
-        token,
-        deviceId: `web|${uid}`
-      },
-      {
-        Referer: `${context.base}/`,
-        'User-Agent': device.user_agent
-      }
-    );
+    let authCode = token;
   
-    const passportAccessToken = must(
-      passportResponse?.accessToken,
-      `passport login failed: ${JSON.stringify(passportResponse)}`
-    );
+    // JP는 브라우저에서 뽑은 TOKEN을 oauth2Auth code로 직접 사용
+    // EN/KR 쪽에서 passport 교환이 필요할 때만 이 분기 사용
+    if (server.key !== 'jp') {
+      const passportResponse = await requestFormJson(
+        buildUrl(context.passportBase, 'user/login/'),
+        {
+          uid,
+          token,
+          deviceId: `web|${uid}`
+        },
+        {
+          Referer: `${context.base}/`,
+          'User-Agent': device.user_agent
+        }
+      );
   
-    oauthType = 7;
+      authCode = must(
+        passportResponse?.accessToken,
+        `passport login failed: ${JSON.stringify(passportResponse)}`
+      );
+  
+      oauthType = 7;
+    }
   
     const authResponse = await call(
       '.lq.Lobby.oauth2Auth',
       proto.ReqOauth2Auth,
       buildOauth2AuthPayload({
         oauthType,
-        token: passportAccessToken,
+        token: authCode,
         uid,
         clientVersionString: clientMetadata.clientVersionString
       }),
