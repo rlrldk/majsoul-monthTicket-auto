@@ -251,7 +251,6 @@ async function loadServerContext(server) {
   const productVersion = parseProductVersion(indexHtml);
   const clientMetadata = buildClientMetadata({
     productVersion,
-    webVersion: version,
     resourceVersion: process.env.MS_RESOURCE_VERSION || process.env.RESOURCE_VERSION
   });
   
@@ -495,7 +494,7 @@ async function createSessionForRoute(context, route, credentials) {
         `passport login failed: ${JSON.stringify(passportResponse)}`
       );
   
-      oauthType = 7;
+      oauthType = 21;
     }
   
     const authResponse = await call(
